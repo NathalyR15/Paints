@@ -1,7 +1,7 @@
 ﻿using System;
-using System.Data;
+using System.Security.Cryptography;
 using System.Windows.Forms;
-using Microsoft.Data.SqlClient; // ✅ Usar el nuevo paquete
+using Microsoft.Data.SqlClient;
 
 namespace Paints
 {
@@ -9,7 +9,8 @@ namespace Paints
     {
         private string connectionString = "Data Source=NATH;Initial Catalog=PaintsDB;Integrated Security=True;TrustServerCertificate=True;";
 
-        public Registro()
+
+    public Registro()
         {
             InitializeComponent();
         }
@@ -33,19 +34,30 @@ namespace Paints
             }
             if (textBox2.Text != textBox3.Text)
             {
-                MessageBox.Show("Las contraseñas no coinciden");
+                MessageBox.Show("Las contraseñas no coinciden.");
                 return;
             }
 
             string nombre = textBox1.Text.Trim();
             string contrasena = textBox2.Text;
-            string rol = comboBox1.SelectedItem.ToString();
+            string rol = comboBox1.SelectedItem?.ToString() ?? string.Empty;
+
+
+            // ✅ Generar salt y hash con PBKDF2
+            byte[] salt = new byte[16];
+            RandomNumberGenerator.Fill(salt);
+
+            byte[] hash;
+            using (var pbkdf2 = new Rfc2898DeriveBytes(contrasena, salt, 100_000, HashAlgorithmName.SHA256))
+            {
+                hash = pbkdf2.GetBytes(32);
+            }
 
             string sql = @"
-                INSERT INTO Usuario (Nombre, Contrasena, Rol)
-                VALUES (@Nombre, @Contrasena, @Rol);
-                SELECT SCOPE_IDENTITY();
-            ";
+            INSERT INTO Usuario (Nombre, Contrasena, PasswordHash, PasswordSalt, Rol, FechaCreacion)
+            VALUES (@Nombre, NULL, @PasswordHash, @PasswordSalt, @Rol, GETDATE());
+            SELECT SCOPE_IDENTITY();
+        ";
 
             try
             {
@@ -53,14 +65,15 @@ namespace Paints
                 using (SqlCommand cmd = new SqlCommand(sql, conn))
                 {
                     cmd.Parameters.AddWithValue("@Nombre", nombre);
-                    cmd.Parameters.AddWithValue("@Contrasena", contrasena);
+                    cmd.Parameters.Add("@PasswordHash", System.Data.SqlDbType.VarBinary, hash.Length).Value = hash;
+                    cmd.Parameters.Add("@PasswordSalt", System.Data.SqlDbType.VarBinary, salt.Length).Value = salt;
                     cmd.Parameters.AddWithValue("@Rol", rol);
 
                     conn.Open();
                     object result = cmd.ExecuteScalar();
                     int nuevoId = Convert.ToInt32(result);
 
-                    MessageBox.Show($"Usuario registrado con éxito. ID generado = {nuevoId}");
+                    MessageBox.Show($"Usuario registrado con éxito. ID = {nuevoId}");
                     LimpiarFormulario();
                 }
             }
@@ -85,8 +98,9 @@ namespace Paints
 
         private void checkBox1_CheckedChanged(object sender, EventArgs e)
         {
-            textBox2.UseSystemPasswordChar = !checkBox1.Checked;
-            textBox3.UseSystemPasswordChar = !checkBox1.Checked;
+            bool mostrar = checkBox1.Checked;
+            textBox2.UseSystemPasswordChar = !mostrar;
+            textBox3.UseSystemPasswordChar = !mostrar;
         }
 
         private void Registro_Load(object sender, EventArgs e)
@@ -95,16 +109,13 @@ namespace Paints
             textBox3.UseSystemPasswordChar = true;
         }
 
-
         private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Inicio frmInicio = new Inicio();
-
-            // Mostrar el formulario de inicio
+            var frmInicio = new Inicio();
             frmInicio.Show();
-
-            // Cerrar el formulario actual (Registro)
             this.Hide();
         }
     }
+
+
 }
